@@ -9,11 +9,11 @@ def pipeline():
 def test_transform(pipeline):
     df = pd.DataFrame({'raw_data': ['{"eventName": "permanentActivation"}']})
     transformed = pipeline.transform(df)
-    assert 'event_type' in transformed.columns
-    assert transformed['event_type'].iloc[0] == 'permanentActivation'
+    assert 'eventName' in transformed.columns
+    assert transformed['eventName'].iloc[0] == 'permanentActivation'
 
 def test_validate_success(pipeline):
-    df = pd.DataFrame({'event_type': ['permanentActivation'], 'user': ['test@example.com'], 'mtf_id': ['123']})
+    df = pd.DataFrame({'mtf_id': ['123'], 'user': ['test@example.com'], 'timestamp': ['2023-01-01'], 'eventName': ['permanentActivation']})
     assert pipeline.validate(df) is True
 
 def test_validate_failure(pipeline):

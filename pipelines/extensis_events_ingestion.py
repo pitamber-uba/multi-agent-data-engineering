@@ -14,16 +14,18 @@ class ExtensisEventsIngestionPipeline:
     def transform(self, df):
         self.logger.info("Transforming data...")
         # Simulate parsing
-        df['event_type'] = 'permanentActivation'
+        df['eventName'] = 'permanentActivation'
         df['user'] = 'test@example.com'
         df['mtf_id'] = '123'
+        df['timestamp'] = '2023-01-01'
         return df
 
     def validate(self, df):
         self.logger.info("Validating data...")
         if df.empty:
             raise ValueError("DataFrame is empty")
-        required_fields = ['event_type', 'user', 'mtf_id']
+        # Updated required fields based on spec: mtf_id, user, timestamp, eventName
+        required_fields = ['mtf_id', 'user', 'timestamp', 'eventName']
         for field in required_fields:
             if field not in df.columns:
                 raise ValueError(f"Missing field: {field}")
