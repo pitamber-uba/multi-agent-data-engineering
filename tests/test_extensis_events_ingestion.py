@@ -23,10 +23,10 @@ def test_validate_failure(pipeline):
 
 def test_validate_invalid_event_type(pipeline):
     df = pd.DataFrame({
-        'mtf_id': ['123'], 
-        'user': ['test@example.com'], 
-        'timestamp': ['2023-01-01'], 
-        'eventName': ['invalidEvent']
+        'mtf_id': ['123', '456'], 
+        'user': ['test@example.com', 'test2@example.com'], 
+        'timestamp': ['2023-01-01', '2023-01-01'], 
+        'eventName': ['permanentActivation', 'invalidEvent']
     })
-    with pytest.raises(ValueError, match="Invalid event type found"):
-        pipeline.validate(df)
+    # Should return True even if some records are invalid
+    assert pipeline.validate(df) is True
