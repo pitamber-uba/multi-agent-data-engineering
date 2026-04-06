@@ -1,0 +1,84 @@
+sequenceDiagram
+    participant T as Ticket/Spec
+    participant O as Orchestrator
+    participant D as Dev Agent
+    participant TE as Testing Agent
+    participant P as PR Agent
+    participant DE as Deploy Agent
+    participant G as Git
+    participant J as Jenkins
+
+    T->>O: Workflow triggered (ticket + spec)
+    activate O
+
+    Note over O: Stage 1 — Development
+    O->>D: HandoffEnvelope (stage=development)
+    activate D
+    D->>G: git checkout -b feature/ticket-123
+    D->>D: Generate pipeline code from spec
+    D->>D: Generate test stubs
+    D->>G: git add + commit + push
+    D-->>O: SUCCESS (commit_sha, files_created)
+    deactivate D
+
+    Note over O: Stage 2 — Testing
+    O->>TE: HandoffEnvelope (stage=testing)
+    activate TE
+    TE->>G: git checkout feature/ticket-123
+    TE->>TE: ruff check pipelines/ tests/
+    TE->>TE: pytest tests/ -v
+    TE->>TE: pytest --cov=pipelines
+
+    alt All checks pass
+        TE-->>O: SUCCESS (lint_passed, tests_passed, coverage)
+    else Lint fixable
+        TE->>TE: ruff check --fix
+        TE->>G: git commit fixes
+        TE-->>O: RETRY (auto-fixed)
+        O->>TE: HandoffEnvelope (retry)
+        TE->>TE: Re-run checks
+        TE-->>O: SUCCESS
+    else Tests fail
+        TE-->>O: FAILURE (test_output)
+        O->>D: HandoffEnvelope (feedback)
+        D->>D: Re-generate with fixes
+        D->>G: git commit
+        D-->>O: SUCCESS
+        O->>TE: HandoffEnvelope (re-test)
+        TE-->>O: SUCCESS
+    end
+    deactivate TE
+
+    Note over O: Stage 3 — PR Creation
+    O->>P: HandoffEnvelope (stage=pr_creation)
+    activate P
+    P->>G: git diff --stat main...feature/ticket-123
+    P->>G: git log --oneline main...feature/ticket-123
+    P->>P: Generate PR title + body (includes test results)
+    P->>G: gh pr create --base main --head feature/ticket-123
+    P-->>O: SUCCESS (pr_url, pr_title)
+    deactivate P
+
+    Note over O: Stage 4 — Deployment
+    O->>DE: HandoffEnvelope (stage=deployment)
+    activate DE
+    DE->>G: git tag -a release/ticket-123-abc123
+    DE->>J: POST /job/deploy/buildWithParameters
+    J-->>DE: Queue URL
+    loop Poll until complete
+        DE->>J: GET /build/api/json
+        J-->>DE: {building: true/false}
+    end
+
+    alt Deploy success
+        DE->>DE: Post-deployment validation
+        DE-->>O: SUCCESS (release_tag, build_url, validation)
+    else Deploy failure
+        DE->>G: git revert (rollback)
+        DE-->>O: FAILURE (rollback_initiated)
+    end
+    deactivate DE
+
+    Note over O: Workflow Complete
+    O->>O: Save workflow log to .workflow_logs/
+    deactivate O

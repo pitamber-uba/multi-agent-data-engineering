@@ -1,0 +1,24 @@
+# Core
+PyYAML>=6.0
+requests>=2.31
+
+# AI Providers — Direct API (install at least one for AI mode)
+anthropic>=0.40
+# openai>=1.50
+google-genai>=1.0
+
+# AI Providers — LangChain (alternative to direct API)
+langchain>=0.3
+langchain-core>=0.3
+langchain-anthropic>=0.3
+# langchain-openai>=0.3
+langchain-google-genai>=2.1
+
+# Pipeline dependencies (used by generated code)
+pandas>=2.1
+sqlalchemy>=2.0
+
+# Testing & linting (used by Testing Agent)
+pytest>=8.0
+pytest-cov>=4.1
+ruff>=0.4

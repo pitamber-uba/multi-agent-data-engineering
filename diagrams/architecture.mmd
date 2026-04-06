@@ -1,0 +1,74 @@
+%%{init: {'theme': 'base', 'themeVariables': {'primaryColor': '#4A90D9', 'primaryBorderColor': '#2C5F8A', 'lineColor': '#5C6B7A', 'textColor': '#2D3748', 'fontSize': '14px'}}}%%
+
+graph TB
+    subgraph Trigger["Trigger Layer"]
+        TICKET["Issue / Ticket<br/>(JIRA, GitHub Issue)"]
+        SPEC["Pipeline Spec<br/>(YAML)"]
+    end
+
+    subgraph Orchestrator["Orchestrator — Workflow Engine"]
+        ORCH["Central Orchestrator<br/>State Machine + Retry Logic<br/>Transition Rules + Audit Log"]
+    end
+
+    subgraph Agents["Agent Layer"]
+        DEV["Development Agent<br/>──────────────<br/>• Read spec / ticket<br/>• Generate pipeline code<br/>• Generate tests<br/>• Create feature branch<br/>• Commit & push"]
+
+        TEST["Testing Agent<br/>──────────────<br/>• Run ruff linter<br/>• Run pytest suite<br/>• Measure coverage<br/>• Auto-fix lint issues<br/>• Report pass/fail"]
+
+        PR["PR Agent<br/>──────────────<br/>• Analyze diff<br/>• Generate PR title/body<br/>• Include test results<br/>• Create PR via gh CLI<br/>• Assign reviewers"]
+
+        DEPLOY["Deployment Agent<br/>──────────────<br/>• Tag release<br/>• Trigger Jenkins build<br/>• Poll build status<br/>• Post-deploy validation<br/>• Rollback on failure"]
+    end
+
+    subgraph Tools["Integration Layer"]
+        GIT["Git / GitHub"]
+        JENKINS["Jenkins CI/CD"]
+        PYTEST["pytest + ruff"]
+        NOTIFY["Slack / Notifications"]
+    end
+
+    subgraph Artifacts["Artifact Layer"]
+        BRANCH["Feature Branch<br/>+ Pipeline Code"]
+        TESTS["Test Results<br/>+ Coverage Report"]
+        PRART["Pull Request<br/>+ Change Summary"]
+        RELEASE["Release Tag<br/>+ Deploy Report"]
+    end
+
+    TICKET --> ORCH
+    SPEC --> ORCH
+
+    ORCH -->|"1. HandoffEnvelope"| DEV
+    DEV -->|"SUCCESS"| ORCH
+    ORCH -->|"2. HandoffEnvelope"| TEST
+    TEST -->|"SUCCESS"| ORCH
+    TEST -->|"FAILURE"| ORCH
+    ORCH -->|"retry / feedback"| DEV
+    ORCH -->|"3. HandoffEnvelope"| PR
+    PR -->|"SUCCESS"| ORCH
+    ORCH -->|"4. HandoffEnvelope"| DEPLOY
+    DEPLOY -->|"SUCCESS / FAILURE"| ORCH
+
+    DEV -.-> GIT
+    TEST -.-> PYTEST
+    TEST -.-> GIT
+    PR -.-> GIT
+    DEPLOY -.-> JENKINS
+    DEPLOY -.-> GIT
+    ORCH -.-> NOTIFY
+
+    DEV ==> BRANCH
+    TEST ==> TESTS
+    PR ==> PRART
+    DEPLOY ==> RELEASE
+
+    classDef trigger fill:#FFF3E0,stroke:#F57C00,stroke-width:2px
+    classDef orch fill:#E3F2FD,stroke:#1565C0,stroke-width:2px
+    classDef agent fill:#E8F5E9,stroke:#2E7D32,stroke-width:2px
+    classDef tool fill:#F3E5F5,stroke:#7B1FA2,stroke-width:2px
+    classDef artifact fill:#FFF8E1,stroke:#F9A825,stroke-width:2px
+
+    class TICKET,SPEC trigger
+    class ORCH orch
+    class DEV,TEST,PR,DEPLOY agent
+    class GIT,JENKINS,PYTEST,NOTIFY tool
+    class BRANCH,TESTS,PRART,RELEASE artifact
