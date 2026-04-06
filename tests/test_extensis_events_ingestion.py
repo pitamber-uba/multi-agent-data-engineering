@@ -20,3 +20,13 @@ def test_validate_failure(pipeline):
     df = pd.DataFrame({'wrong_column': [1]})
     with pytest.raises(ValueError):
         pipeline.validate(df)
+
+def test_validate_invalid_event_type(pipeline):
+    df = pd.DataFrame({
+        'mtf_id': ['123'], 
+        'user': ['test@example.com'], 
+        'timestamp': ['2023-01-01'], 
+        'eventName': ['invalidEvent']
+    })
+    with pytest.raises(ValueError, match="Invalid event type found"):
+        pipeline.validate(df)

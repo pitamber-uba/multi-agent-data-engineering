@@ -29,6 +29,18 @@ class ExtensisEventsIngestionPipeline:
         for field in required_fields:
             if field not in df.columns:
                 raise ValueError(f"Missing field: {field}")
+        
+        # New quality check: event_type_in
+        allowed_events = [
+            'permanentActivation',
+            'temporaryActivation',
+            'riskScan',
+            'autoActivation',
+            'addedToLibrary'
+        ]
+        if not df['eventName'].isin(allowed_events).all():
+            raise ValueError("Invalid event type found")
+            
         return True
 
     def load(self, df):
