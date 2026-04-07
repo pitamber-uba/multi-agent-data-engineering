@@ -96,6 +96,33 @@ TOOL_DEFINITIONS = [
             "required": ["pattern"],
         },
     },
+    {
+        "name": "edit_file",
+        "description": (
+            "Edit an existing file by replacing a specific string with new content. "
+            "Use this instead of write_file when you only need to change part of a file — "
+            "it preserves the rest of the file unchanged. The old_string must match exactly "
+            "(including whitespace and indentation). Prefer this over write_file for incremental changes."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "path": {
+                    "type": "string",
+                    "description": "Path relative to the repository root",
+                },
+                "old_string": {
+                    "type": "string",
+                    "description": "The exact string to find in the file (must be unique within the file)",
+                },
+                "new_string": {
+                    "type": "string",
+                    "description": "The replacement string",
+                },
+            },
+            "required": ["path", "old_string", "new_string"],
+        },
+    },
 ]
 
 
@@ -109,6 +136,7 @@ class RepoTools:
         handlers = {
             "read_file": self._read_file,
             "write_file": self._write_file,
+            "edit_file": self._edit_file,
             "run_command": self._run_command,
             "list_directory": self._list_directory,
             "search_code": self._search_code,
@@ -137,6 +165,20 @@ class RepoTools:
         target.parent.mkdir(parents=True, exist_ok=True)
         target.write_text(content)
         return f"Successfully wrote {len(content)} chars to {path}"
+
+    def _edit_file(self, path: str, old_string: str, new_string: str) -> str:
+        target = self.repo / path
+        if not target.exists():
+            return f"Error: File not found: {path}"
+        content = target.read_text()
+        count = content.count(old_string)
+        if count == 0:
+            return f"Error: old_string not found in {path}. Read the file first to get the exact text."
+        if count > 1:
+            return f"Error: old_string matches {count} locations in {path}. Provide a more specific string."
+        new_content = content.replace(old_string, new_string, 1)
+        target.write_text(new_content)
+        return f"Successfully edited {path} (replaced {len(old_string)} chars with {len(new_string)} chars)"
 
     def _run_command(self, command: str) -> str:
         env = os.environ.copy()

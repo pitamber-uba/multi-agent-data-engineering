@@ -106,7 +106,7 @@ class AIProvider:
                 if not GEMINI_AVAILABLE:
                     raise ImportError("pip install google-genai")
                 self.api_key = api_key or os.environ.get("GOOGLE_API_KEY", "")
-                self.model = model or "gemini-2.5-flash"
+                self.model = model or "gemini-3.1-flash-lite-preview"
                 self.client = genai.Client(api_key=self.api_key)
             else:
                 raise ValueError(f"Unsupported provider: {provider}")
@@ -244,7 +244,11 @@ class AIProvider:
             response = self._gemini_call_with_retry(contents, config)
 
             candidate = response.candidates[0]
-            parts = candidate.content.parts
+            parts = candidate.content.parts if candidate.content else None
+
+            if not parts:
+                logger.info(f"  AI completed in {turn + 1} turns (empty response)")
+                return ""
 
             function_calls = [p for p in parts if p.function_call]
             if not function_calls:

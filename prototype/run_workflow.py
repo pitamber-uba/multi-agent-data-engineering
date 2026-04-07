@@ -202,15 +202,55 @@ def run_demo(args):
     return result
 
 
+def ensure_git_repo(repo_path: str) -> Path:
+    """Create and git-init the repo directory if it doesn't already exist."""
+    repo = Path(repo_path)
+    if not repo.is_absolute():
+        repo = Path(__file__).parent / repo
+    repo = repo.resolve()
+    repo.mkdir(parents=True, exist_ok=True)
+
+    git_dir = repo / ".git"
+    if not git_dir.exists():
+        logger.info(f"Initializing new git repo at: {repo}")
+        subprocess.run(["git", "init"], cwd=repo, capture_output=True, check=True)
+        subprocess.run(
+            ["git", "config", "user.email", "agent@pipeline.local"],
+            cwd=repo, capture_output=True, check=True,
+        )
+        subprocess.run(
+            ["git", "config", "user.name", "Multi-Agent Pipeline"],
+            cwd=repo, capture_output=True, check=True,
+        )
+        readme = repo / "README.md"
+        if not readme.exists():
+            readme.write_text("# Pipeline Repo\n")
+        subprocess.run(["git", "add", "."], cwd=repo, capture_output=True, check=True)
+        subprocess.run(
+            ["git", "commit", "-m", "chore: initial commit"],
+            cwd=repo, capture_output=True, check=True,
+        )
+    return repo
+
+
 def run_workflow(args):
     """Run the workflow against a real repository."""
+    repo = ensure_git_repo(args.repo)
     ai_provider = args.ai_provider if args.ai else ""
 
+    spec_path = args.spec
+    if spec_path:
+        spec_src = Path(spec_path)
+        if not spec_src.is_absolute():
+            spec_src = (Path(__file__).parent / spec_src).resolve()
+        spec_dest = copy_spec_to_repo(repo, spec_src)
+        spec_path = str(spec_dest)
+
     config = WorkflowConfig(
-        repo_path=args.repo,
+        repo_path=str(repo),
         base_branch=args.base_branch,
         ticket_ref=args.ticket,
-        pipeline_spec=args.spec,
+        pipeline_spec=spec_path,
         jenkins_url=args.jenkins_url or os.environ.get("JENKINS_URL", ""),
         jenkins_job=args.jenkins_job or os.environ.get("JENKINS_JOB", ""),
         max_retries=args.max_retries,
@@ -257,13 +297,10 @@ def main():
 
     args = parser.parse_args()
 
-    if args.demo:
+    if args.demo or (not args.repo):
         result = run_demo(args)
     elif args.repo:
         result = run_workflow(args)
-    else:
-        parser.print_help()
-        sys.exit(1)
 
     sys.exit(0 if result.result and result.result.value == "success" else 1)
 
