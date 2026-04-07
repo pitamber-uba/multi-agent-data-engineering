@@ -1,0 +1,69 @@
+pipeline:
+  name: user_activity_tracker
+  ticket: "TICKET-301"
+  description: >
+    Real-time user activity pipeline that ingests clickstream events
+    from a Kafka topic, sessionizes the events using a 30-minute
+    inactivity window, enriches with user profile data, and loads
+    session-level metrics into a MySQL reporting table.
+
+  extract:
+    source: kafka
+    topic: "${CLICKSTREAM_TOPIC}"
+    consumer_group: "activity-pipeline"
+    format: json
+    fields:
+      - user_id
+      - event_type
+      - page_url
+      - timestamp
+      - device_type
+      - referrer
+
+  transform:
+    steps:
+      - filter_bots:
+          condition: "device_type != 'bot'"
+
+      - sessionize:
+          partition_by: user_id
+          order_by: timestamp
+          inactivity_gap_minutes: 30
+          output_column: session_id
+
+      - enrich_user_profile:
+          lookup_table: users
+          join_key: user_id
+          fields: [account_type, signup_date, country]
+
+      - aggregate_sessions:
+          group_by: [user_id, session_id]
+          metrics:
+            page_views: "count(page_url)"
+            session_duration_sec: "max(timestamp) - min(timestamp)"
+            unique_pages: "count_distinct(page_url)"
+          keep_first: [device_type, country, account_type]
+
+  quality_checks:
+    pre_load:
+      - row_count_gt: 0
+      - required_fields_not_null:
+          fields: [user_id, session_id, page_views]
+
+  load:
+    destinations:
+      - name: reporting_db
+        engine: mysql
+        table: analytics.user_sessions
+        mode: append
+        chunksize: 500
+        columns:
+          - user_id
+          - session_id
+          - page_views
+          - session_duration_sec
+          - unique_pages
+          - device_type
+          - country
+          - account_type
+          - load_date

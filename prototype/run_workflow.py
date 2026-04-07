@@ -203,33 +203,40 @@ def run_demo(args):
 
 
 def ensure_git_repo(repo_path: str) -> Path:
-    """Create and git-init the repo directory if it doesn't already exist."""
+    """Ensure the repo directory exists and is inside a git repository."""
     repo = Path(repo_path)
     if not repo.is_absolute():
         repo = Path(__file__).parent / repo
     repo = repo.resolve()
     repo.mkdir(parents=True, exist_ok=True)
 
-    git_dir = repo / ".git"
-    if not git_dir.exists():
-        logger.info(f"Initializing new git repo at: {repo}")
-        subprocess.run(["git", "init"], cwd=repo, capture_output=True, check=True)
-        subprocess.run(
-            ["git", "config", "user.email", "agent@pipeline.local"],
-            cwd=repo, capture_output=True, check=True,
-        )
-        subprocess.run(
-            ["git", "config", "user.name", "Multi-Agent Pipeline"],
-            cwd=repo, capture_output=True, check=True,
-        )
-        readme = repo / "README.md"
-        if not readme.exists():
-            readme.write_text("# Pipeline Repo\n")
-        subprocess.run(["git", "add", "."], cwd=repo, capture_output=True, check=True)
-        subprocess.run(
-            ["git", "commit", "-m", "chore: initial commit"],
-            cwd=repo, capture_output=True, check=True,
-        )
+    result = subprocess.run(
+        ["git", "rev-parse", "--show-toplevel"],
+        cwd=repo, capture_output=True, text=True,
+    )
+    if result.returncode == 0:
+        git_root = Path(result.stdout.strip())
+        logger.info(f"Using existing git repo at: {git_root}")
+        return repo
+
+    logger.info(f"Initializing new git repo at: {repo}")
+    subprocess.run(["git", "init"], cwd=repo, capture_output=True, check=True)
+    subprocess.run(
+        ["git", "config", "user.email", "agent@pipeline.local"],
+        cwd=repo, capture_output=True, check=True,
+    )
+    subprocess.run(
+        ["git", "config", "user.name", "Multi-Agent Pipeline"],
+        cwd=repo, capture_output=True, check=True,
+    )
+    readme = repo / "README.md"
+    if not readme.exists():
+        readme.write_text("# Pipeline Repo\n")
+    subprocess.run(["git", "add", "."], cwd=repo, capture_output=True, check=True)
+    subprocess.run(
+        ["git", "commit", "-m", "chore: initial commit"],
+        cwd=repo, capture_output=True, check=True,
+    )
     return repo
 
 

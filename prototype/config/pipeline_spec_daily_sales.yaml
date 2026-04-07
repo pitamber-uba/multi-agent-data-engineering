@@ -1,0 +1,63 @@
+pipeline:
+  name: daily_sales_summary
+  ticket: "TICKET-201"
+  description: >
+    Daily ETL pipeline that reads raw sales transaction CSVs from S3,
+    cleans and deduplicates records, calculates daily revenue and
+    order-count aggregates per region, and loads the summary into
+    a PostgreSQL analytics table.
+
+  extract:
+    source: s3
+    bucket: "${SALES_S3_BUCKET}"
+    prefix: "raw/sales/"
+    file_format: csv
+    columns:
+      - order_id
+      - customer_id
+      - product_id
+      - quantity
+      - unit_price
+      - region
+      - order_date
+      - payment_method
+
+  transform:
+    steps:
+      - deduplicate:
+          key: order_id
+          keep: first
+
+      - calculate_revenue:
+          formula: "quantity * unit_price"
+          output_column: revenue
+
+      - aggregate_daily:
+          group_by: [region, order_date]
+          metrics:
+            total_revenue: "sum(revenue)"
+            order_count: "count(order_id)"
+            avg_order_value: "mean(revenue)"
+
+  quality_checks:
+    pre_load:
+      - row_count_gt: 0
+      - required_fields_not_null:
+          fields: [order_id, quantity, unit_price, region, order_date]
+      - column_not_null:
+          - revenue
+
+  load:
+    destinations:
+      - name: analytics_db
+        engine: postgresql
+        table: public.daily_sales_summary
+        mode: upsert
+        upsert_key: [region, order_date]
+        columns:
+          - region
+          - order_date
+          - total_revenue
+          - order_count
+          - avg_order_value
+          - load_timestamp
