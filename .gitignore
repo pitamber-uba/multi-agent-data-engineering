@@ -4,6 +4,6 @@ __pycache__/
 *.pyc
 .pytest_cache/
 .coverage
-prototype/output/
 .workflow_logs/
 .DS_Store
+.pull_requests/

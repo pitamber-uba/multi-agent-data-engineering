@@ -1,0 +1,453 @@
+# ============================================================================
+# DataLakeForge — ETL Pipeline Content Prompt Template
+# ============================================================================
+# This template drives automatic pipeline generation for the DataLakeForge
+# framework. Fill in each section to describe a new ETL job; the generator
+# will produce main.py, process_<name>.py, and helper additions accordingly.
+# ============================================================================
+
+pipeline:
+  name: extensis_events_ingestion
+  ticket: "TICKET-456"
+  job_name: "ExtensisEventsIngestion"
+  description: >
+    Incremental ETL pipeline that ingests Extensis font-activation events
+    exported from DynamoDB Streams into S3 (gzipped JSONL), enriches each
+    record with GCID / profile / font-style lookups against MTF and CDL
+    MySQL databases, aggregates the results with Polars, and loads them
+    into the Common Data Layer (sync_download, asset, project tables) and
+    Font Universe (usage_data monthly merge) on RDS MySQL.
+
+  # --------------------------------------------------------------------------
+  # EXTRACT — where the raw data lives
+  # --------------------------------------------------------------------------
+  extract:
+    source: s3
+    bucket: "${SOURCE_S3_BUCKET}"
+    prefix: "${SOURCE_S3_PREFIX}"
+    region: "${SOURCE_AWS_REGION}"
+    aws_profile: "${SOURCE_AWS_PROFILE}"       # used only when ENV_NAME=dev
+    file_format: jsonl_gz                       # gzipped, line-delimited JSON
+    record_shape: dynamodb_stream               # NewImage with typed attributes
+    discovery:
+      method: manifest                          # read manifest-files.json per folder
+      manifest_file: "manifest-files.json"
+      data_key_field: "dataFileS3Key"
+    incremental:
+      strategy: watermark
+      control_table: "lm_cdl_to_rds_incremental_control"
+      watermark_column: "load_start_time"
+      filter: "load_status = 'Success'"
+      comparison_field: "manifest LastModified timestamp"
+
+  # --------------------------------------------------------------------------
+  # LOOKUP / ENRICHMENT — reference databases read during transform
+  # --------------------------------------------------------------------------
+  lookups:
+    - name: customer_management
+      engine: mysql
+      secret: "${DB_SECRET_NAME_MTF}"
+      database: "${MTF_DATABASE}"
+      tables:
+        - table: externalcustomer_map
+          purpose: "Resolve Auth0 ID → GCID (customer_id)"
+          key_column: identity_provider_id
+          return_column: customer_id
+
+    - name: user_management
+      engine: mysql
+      secret: "${DB_SECRET_NAME_MTF}"
+      database: "${USER_DATABASE}"
+      tables:
+        - table: externaluser_map → profiles (JOIN)
+          purpose: "Resolve email + GCID → profile UUID"
+          key_columns: [email, customer_id]
+          return_column: "BIN_TO_UUID(profiles.id)"
+
+    - name: cdl_font_style
+      engine: mysql
+      secret: "${DB_SECRET_NAME_CDL}"
+      database: "${TARGET_DATABASE}"
+      tables:
+        - table: font_style
+          purpose: "Map font_style_id / pimid → (font_style_id, family_id)"
+          key_columns: [font_style_id, pimid]
+          return_columns: [font_style_id, family_id]
+
+    - name: font_universe
+      engine: mysql
+      secret: "${DB_SECRET_NAME_FUN}"
+      database: "${FONT_UNIVERSE_DATABASE}"
+      connection_mode: "${FUN_SSL_URL:+ssh_tunnel}"  # SSH tunnel when FUN_SSL_URL set
+      tunnel_port: "${TUNNEL_PORT}"
+      tables:
+        - table: font + metadata
+          purpose: "Resolve fontsense_id (+ ps_name fallback) → font.id"
+        - table: usage_type
+          purpose: "Map event type name → usage_type_id"
+        - table: source_system
+          purpose: "Map source system name → source_system_id"
+        - table: customer_identifier_type
+          purpose: "Map identifier type name (e.g. GCID) → customer_identifier_type_id"
+
+  # --------------------------------------------------------------------------
+  # TRANSFORM — processing steps applied in order
+  # --------------------------------------------------------------------------
+  transform:
+    parallelism:
+      method: thread_pool
+      max_workers: "auto"                       # min(16, cpu_count * 0.75), floor 2
+
+    steps:
+      - parse_dynamodb:
+          record_path: "$.dynamodb.NewImage"
+          extract_fields:
+            type:       "$.eventName.S"
+            user:       "$.userEmail.S"
+            mtf_id:     "$.mtfid.S"
+            timestamp:  "$.timestamp.S"
+            fonts:      "$.adobeFonts.L | $.teamFonts.L | $.personalFonts.L | $.systemFonts.L | $.riskScanFonts.L"
+
+      - parse_font_identifier:
+          delimiter: ":XTS:"
+          output_fields:
+            ps_name:      "index 0"
+            fontsense_id: "index 5"
+            style_id:     "index 6"
+
+      - filter_event_types:
+          allowed:
+            - permanentActivation
+            - temporaryActivation
+            - riskScan
+            - autoActivation
+            - addedToLibrary
+          special_rules:
+            addedToLibrary: "route to asset + project tables when WebProject"
+
+      - enrich_gcid:
+          source_field: mtf_id
+          lookup: customer_management.externalcustomer_map
+          target_field: gcid
+          on_miss: skip_record
+
+      - enrich_profile:
+          source_fields: [user, gcid]
+          lookup: user_management.profiles
+          target_field: profile_id
+          on_miss: skip_record                  # only for sync_download path
+
+      - enrich_style:
+          source_field: fonts[].fontsense_id
+          lookup: cdl_font_style.font_style
+          target_fields: [font_style_id, family_id]
+          on_miss: skip_font_entry
+
+      - enrich_font_universe:
+          source_fields: [fontsense_id, ps_name]
+          lookup: font_universe.font
+          target_field: font_id
+          on_miss: skip_fu_record
+
+      - split_routing:
+          condition: "event.type == 'addedToLibrary' AND has WebProject context"
+          when_true:
+            route: webproject_path              # → asset + project tables
+          when_false:
+            route: sync_download_path           # → sync_download table
+
+      - aggregate_sync_download:
+          engine: polars
+          group_by: [gcid, profile_id, font_style_id, family_id, event_type, event_date]
+          metrics:
+            event_count: "len()"
+          static_columns:
+            source: "NA"
+            subtype: "NA"
+            load_date: "today()"
+
+      - aggregate_asset:
+          engine: polars
+          deduplicate_by: [project_id, font_style_id, created_at]
+          keep: first
+          columns: [asset_type, project_id, profile_id, gcid, font_style_id, family_id, created_at, is_deleted, asset_deleted_at]
+
+      - aggregate_project:
+          engine: polars
+          deduplicate_by: [project_id]
+          agg:
+            created_at: "min"
+          keep_first: [profile_id, gcid, project_name, project_type, is_deleted]
+
+      - aggregate_font_universe_usage:
+          engine: pandas
+          group_by: [customer_id, font_id, usage_type_id, source_system_id, customer_identifier_type_id, event_date]
+          metrics:
+            fu_event_count: "len()"
+          monthly_merge:
+            enabled: true
+            group_by: [customer_id, font_id, year, month, usage_type, source_system]
+            agg:
+              first_usage: "min"
+              last_usage:  "max"
+              count:       "sum"
+              customer_identifier_type: "first"
+            strategy: "delete_impacted_months_then_insert"
+            locking: "FOR UPDATE (row + gap locks)"
+
+  # --------------------------------------------------------------------------
+  # LOAD — destination databases and write strategies
+  # --------------------------------------------------------------------------
+  load:
+    destinations:
+      - name: cdl_download_table
+        engine: mysql
+        secret: "${DB_SECRET_NAME_CDL}"
+        database: "${TARGET_DATABASE}"
+        table: sync_download
+        mode: append
+        write_method: "multi"
+        chunksize: 1000
+        columns:
+          - gcid
+          - profile_id
+          - font_style_id
+          - family_id
+          - event_type
+          - event_date
+          - event_count
+          - source
+          - subtype
+          - load_date
+
+      - name: cdl_asset
+        engine: mysql
+        secret: "${DB_SECRET_NAME_CDL}"
+        database: "${TARGET_DATABASE}"
+        table: asset
+        mode: insert_ignore                     # skip duplicates via INSERT IGNORE
+        chunksize: 1000
+        columns:
+          - asset_type
+          - project_id
+          - profile_id
+          - gcid
+          - font_style_id
+          - family_id
+          - created_at
+          - is_deleted
+          - asset_deleted_at
+
+      - name: cdl_project
+        engine: mysql
+        secret: "${DB_SECRET_NAME_CDL}"
+        database: "${TARGET_DATABASE}"
+        table: project
+        mode: insert_ignore
+        chunksize: 1000
+        columns:
+          - id                                  # = project_id
+          - name
+          - project_type
+          - profile_id
+          - gcid
+          - created_at
+          - is_deleted
+          - project_deleted_at
+
+      - name: font_universe_usage
+        engine: mysql
+        secret: "${DB_SECRET_NAME_FUN}"
+        database: "${FONT_UNIVERSE_DATABASE}"
+        table: usage_data
+        mode: monthly_merge                     # delete + re-insert for impacted months
+        batch_size: 500
+        locking: "SELECT ... FOR UPDATE"
+        columns:
+          - customer_id
+          - font_id
+          - usage_type
+          - source_system
+          - customer_identifier_type
+          - first_usage
+          - last_usage
+          - count
+          - last_modified
+
+  # --------------------------------------------------------------------------
+  # CREDENTIALS — how secrets are resolved
+  # --------------------------------------------------------------------------
+  credentials:
+    provider: aws_secrets_manager
+    region: "${SECRETS_MANAGER_REGION}"
+    secrets:
+      - name: "${DB_SECRET_NAME_MTF}"
+        fields: [username, password, host, port]
+      - name: "${DB_SECRET_NAME_CDL}"
+        fields: [username, password, host, port]
+      - name: "${DB_SECRET_NAME_FUN}"
+        fields: [username, password, host, port, dbInstanceIdentifier]
+    ssh_tunnel:
+      enabled_when: "${FUN_SSL_URL} is set"
+      command: "${FUN_SSL_URL}"
+      local_port: "${TUNNEL_PORT}"
+      health_check:
+        host: "127.0.0.1"
+        retries: 10
+        interval_seconds: 1
+
+  # --------------------------------------------------------------------------
+  # ENVIRONMENTS — per-env property files
+  # --------------------------------------------------------------------------
+  environments:
+    properties_dir: "Properties/"
+    files:
+      dev:
+        file: "dev.properties"
+        env_name: dev
+        source_bucket: "reporting-latest-jenkins-reporting-co-exportbucket-9hc2az4lxtzj"
+        target_database: "common_data_layer_preprod"
+      preprod:
+        file: "preprod.properties"
+        env_name: preprod
+      prod:
+        file: "prod.properties"
+        env_name: prod
+        source_bucket: "reporting-prod-platform-reporting-com-exportbucket-85rwfr5igvuh"
+        target_database: "common_data_layer"
+
+  # --------------------------------------------------------------------------
+  # SCHEDULING — external to this repo; declare intent here
+  # --------------------------------------------------------------------------
+  schedule:
+    # Pipeline runs as a Docker container triggered externally
+    # (ECS Scheduled Task, Jenkins, Step Functions, EventBridge, etc.)
+    trigger: external
+    recommended_cron: "0 */4 * * *"             # every 4 hours
+    timezone: "UTC"
+    container:
+      image: "python:3.12-slim"
+      dockerfile: "Dockerfile"
+      compose_file: "docker-compose.yml"
+      run_command: "python code/main.py"
+      env_file: "Properties/${ENV_NAME}.properties"
+
+  # --------------------------------------------------------------------------
+  # CONTROL TABLE — job audit and run tracking
+  # --------------------------------------------------------------------------
+  control:
+    table: lm_cdl_to_rds_incremental_control
+    database: "${TARGET_DATABASE}"
+    fields:
+      - job_name
+      - source_data
+      - source_database
+      - source_table
+      - target_layer
+      - target_database
+      - target_table
+      - source_count
+      - target_count
+      - load_date
+      - load_status                             # Success | Partial | Failed
+      - load_start_time
+      - load_end_time
+      - job_run_time
+      - created_on
+    file_tracking:
+      table: extensis_to_cdl_file_tracking
+      fields: [job_name, s3_file_path, file_read_timestamp, raw_count, created_on]
+
+  # --------------------------------------------------------------------------
+  # QUALITY CHECKS — validation rules enforced during processing
+  # --------------------------------------------------------------------------
+  quality_checks:
+    pre_load:
+      - row_count_gt: 0
+        description: "At least one new S3 folder must exist after watermark"
+
+      - required_fields_not_null:
+          fields: [mtf_id, user, timestamp, eventName]
+          on_fail: skip_record
+
+      - event_type_in:
+          allowed: [permanentActivation, temporaryActivation, riskScan, autoActivation, addedToLibrary]
+          on_fail: skip_record
+
+      - font_list_not_empty:
+          any_of: [adobeFonts, teamFonts, personalFonts, systemFonts, riskScanFonts]
+          on_fail: skip_record
+
+      - lookup_resolved:
+          fields: [gcid, profile_id]
+          on_fail: skip_record
+
+      - font_universe_fields_valid:
+          required: [customer_id, font_id, usage_type_id, source_system_id, event_date]
+          on_fail: skip_fu_record
+
+    post_load:
+      - control_record_status:
+          expected: [Success, Partial]
+          on_fail: exit_code_1
+
+      - source_vs_target_count:
+          comparison: "target_count > 0 when source_count > 0"
+          on_fail: log_warning
+
+  # --------------------------------------------------------------------------
+  # ERROR HANDLING & RESILIENCE
+  # --------------------------------------------------------------------------
+  error_handling:
+    folder_level:
+      strategy: continue_on_failure
+      outcome: "Partial status + exit code 1 if any folder fails"
+    file_level:
+      strategy: skip_on_error
+      log: true
+    record_level:
+      strategy: skip_and_count
+      counters: [raw_count, eligible_count, processed_count, skipped_count]
+    write_level:
+      strategy: fallback
+      primary: polars_to_sql
+      fallback: pandas_to_sql
+      on_total_failure: log_error
+    connection:
+      pool_pre_ping: true
+      pool_recycle: 3600
+      read_timeout: 600
+      write_timeout: 600
+    shutdown:
+      graceful: true
+      actions:
+        - close_font_universe_connection
+        - terminate_ssh_tunnel
+
+  # --------------------------------------------------------------------------
+  # LOGGING
+  # --------------------------------------------------------------------------
+  logging:
+    level: "${LOG_LEVEL}"
+    format: "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
+    output: stdout
+    per_folder_summary: true
+    final_summary:
+      fields: [folders_processed, failed_folders, total_raw_count, total_eligible, total_processed, total_skipped, total_target_count]
+
+  # --------------------------------------------------------------------------
+  # DEPENDENCIES — Python packages required
+  # --------------------------------------------------------------------------
+  dependencies:
+    python: "3.12"
+    packages:
+      - boto3                                   # AWS SDK (S3, Secrets Manager)
+      - pandas                                  # DataFrames, DB reads, fallback writes
+      - numpy                                   # Numeric support
+      - sqlalchemy                              # DB engine / ORM
+      - pymysql                                 # MySQL driver
+      - polars                                  # High-performance aggregation
+      - pyarrow                                 # Columnar format (Polars backend)
+    system:
+      - openssh-client                          # SSH tunnel for Font Universe
+      - unixodbc-dev                            # ODBC support
