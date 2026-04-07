@@ -38,18 +38,13 @@ class ExtensisEventsIngestionPipeline:
             'autoActivation',
             'addedToLibrary'
         ]
-        # Filter out invalid records instead of raising error
+        # Filter out invalid records
         invalid_mask = ~df['eventName'].isin(allowed_events)
         if invalid_mask.any():
             self.logger.warning(f"Skipping {invalid_mask.sum()} records with invalid event types")
-            # We need to return the filtered dataframe or modify it. 
-            # Since the current structure doesn't return the dataframe, 
-            # let's just ensure the logic is correct.
-            # Actually, the pipeline should probably return the filtered dataframe.
-            # But I will stick to minimal changes.
-            pass
+            df = df[~invalid_mask].copy()
             
-        return True
+        return df
 
     def load(self, df):
         self.logger.info("Loading data to target...")
@@ -60,8 +55,8 @@ class ExtensisEventsIngestionPipeline:
         try:
             raw_data = self.extract()
             transformed_data = self.transform(raw_data)
-            self.validate(transformed_data)
-            self.load(transformed_data)
+            validated_data = self.validate(transformed_data)
+            self.load(validated_data)
             self.logger.info("Pipeline completed successfully.")
         except Exception as e:
             self.logger.error(f"Pipeline failed: {e}")

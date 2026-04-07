@@ -14,7 +14,8 @@ def test_transform(pipeline):
 
 def test_validate_success(pipeline):
     df = pd.DataFrame({'mtf_id': ['123'], 'user': ['test@example.com'], 'timestamp': ['2023-01-01'], 'eventName': ['permanentActivation']})
-    assert pipeline.validate(df) is True
+    validated = pipeline.validate(df)
+    assert len(validated) == 1
 
 def test_validate_failure(pipeline):
     df = pd.DataFrame({'wrong_column': [1]})
@@ -28,5 +29,6 @@ def test_validate_invalid_event_type(pipeline):
         'timestamp': ['2023-01-01', '2023-01-01'], 
         'eventName': ['permanentActivation', 'invalidEvent']
     })
-    # Should return True even if some records are invalid
-    assert pipeline.validate(df) is True
+    validated = pipeline.validate(df)
+    assert len(validated) == 1
+    assert validated['eventName'].iloc[0] == 'permanentActivation'
