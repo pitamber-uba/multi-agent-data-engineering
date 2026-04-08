@@ -7,7 +7,7 @@ class MyFontsShopifyToDemoETL:
         self.target_engine = create_engine(target_url)
 
     def extract(self):
-        query = "SELECT * FROM myfonts_shopify_data"
+        query = "SELECT * FROM myfonts_shopify_data LIMIT 100"
         return pd.read_sql(query, self.source_engine)
 
     def transform(self, df):
