@@ -1,18 +1,26 @@
 import pandas as pd
+import logging
 from sqlalchemy import create_engine
 
 class MyFontsShopifyToDemoETL:
     def __init__(self, source_url, target_url):
+        self.logger = logging.getLogger(__name__)
         self.source_engine = create_engine(source_url)
         self.target_engine = create_engine(target_url)
 
     def extract(self):
+        self.logger.info("Extracting data from MyFonts_Legacy.myfonts_shopify_data")
         query = "SELECT * FROM myfonts_shopify_data LIMIT 100"
-        return pd.read_sql(query, self.source_engine)
+        df = pd.read_sql(query, self.source_engine)
+        self.logger.info(f"Extracted {len(df)} rows")
+        return df
 
     def transform(self, df):
+        self.logger.info("Starting transformation")
+        
         # Drop columns
         df = df.drop(columns=['skuid', 'eula_id'], errors='ignore')
+        self.logger.info("Dropped columns: skuid, eula_id")
         
         # Derive domain
         def get_domain(email):
@@ -21,6 +29,7 @@ class MyFontsShopifyToDemoETL:
             return str(email).split('@')[1]
         
         df['domain'] = df['email'].apply(get_domain)
+        self.logger.info("Derived 'domain' column")
         
         # Select columns
         columns = [
@@ -33,22 +42,48 @@ class MyFontsShopifyToDemoETL:
         for col in columns:
             if col not in df.columns:
                 df[col] = None
-        return df[columns]
+        
+        df = df[columns]
+        self.logger.info(f"Transformation complete. Row count: {len(df)}")
+        return df
 
     def validate(self, df):
+        self.logger.info("Starting quality checks")
         if len(df) <= 0:
+            self.logger.error("Validation failed: Row count is 0")
             raise ValueError("Row count is 0")
+        self.logger.info("Validation passed: Row count > 0")
+        
         if df['id'].isnull().any():
+            self.logger.error("Validation failed: id column contains nulls")
             raise ValueError("id column contains nulls")
+        self.logger.info("Validation passed: id column not null")
+        
         if df['process_at'].isnull().any():
+            self.logger.error("Validation failed: process_at column contains nulls")
             raise ValueError("process_at column contains nulls")
+        self.logger.info("Validation passed: process_at column not null")
+        
         return True
 
     def load(self, df):
+        self.logger.info("Loading data into MyEtlDemo.testTable")
         df.to_sql('testTable', self.target_engine, if_exists='append', index=False, chunksize=1000)
+        self.logger.info(f"Loaded {len(df)} rows")
 
     def run(self):
-        df = self.extract()
-        df = self.transform(df)
-        self.validate(df)
-        self.load(df)
+        import time
+        start_time = time.time()
+        self.logger.info("Pipeline run started")
+        try:
+            df = self.extract()
+            df = self.transform(df)
+            self.validate(df)
+            self.load(df)
+            self.logger.info("Pipeline run completed successfully")
+        except Exception as e:
+            self.logger.error(f"Pipeline run failed: {e}")
+            raise
+        finally:
+            end_time = time.time()
+            self.logger.info(f"Pipeline run finished in {end_time - start_time:.2f} seconds")
