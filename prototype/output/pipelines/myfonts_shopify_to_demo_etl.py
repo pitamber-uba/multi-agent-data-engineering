@@ -12,7 +12,7 @@ class MyFontsShopifyToDemoETL:
         self.logger.info("Extracting data from MyFonts_Legacy.myfonts_shopify_data")
         query = "SELECT * FROM myfonts_shopify_data LIMIT 100"
         df = pd.read_sql(query, self.source_engine)
-        self.logger.info(f"Extracted {len(df)} rows")
+        self.logger.info(f"Extracted {len(df)} rows from MyFonts_Legacy.myfonts_shopify_data")
         return df
 
     def transform(self, df):
@@ -54,22 +54,20 @@ class MyFontsShopifyToDemoETL:
             raise ValueError("Row count is 0")
         self.logger.info("Validation passed: Row count > 0")
         
-        if df['id'].isnull().any():
-            self.logger.error("Validation failed: id column contains nulls")
-            raise ValueError("id column contains nulls")
-        self.logger.info("Validation passed: id column not null")
-        
-        if df['process_at'].isnull().any():
-            self.logger.error("Validation failed: process_at column contains nulls")
-            raise ValueError("process_at column contains nulls")
-        self.logger.info("Validation passed: process_at column not null")
+        # Check required fields
+        required_fields = ['id', 'process_at']
+        for field in required_fields:
+            if df[field].isnull().any():
+                self.logger.error(f"Validation failed: {field} column contains nulls")
+                raise ValueError(f"{field} column contains nulls")
+            self.logger.info(f"Validation passed: {field} column not null")
         
         return True
 
     def load(self, df):
         self.logger.info("Loading data into MyEtlDemo.testTable")
         df.to_sql('testTable', self.target_engine, if_exists='append', index=False, chunksize=1000)
-        self.logger.info(f"Loaded {len(df)} rows")
+        self.logger.info(f"Loaded {len(df)} rows into MyEtlDemo.testTable")
 
     def run(self):
         import time
