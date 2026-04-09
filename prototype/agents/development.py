@@ -216,8 +216,11 @@ class DevelopmentAgent(BaseAgent):
                 self._generate_pipeline_template(repo, spec)
                 self._generate_tests_template(repo, spec)
 
+            main_file = repo / "main.py"
+            config_file = Path(config.pipeline_spec)
+
             files_to_commit = []
-            for f in [pipeline_file, test_file]:
+            for f in [pipeline_file, test_file, main_file, config_file]:
                 if f.exists():
                     files_to_commit.append(f)
 
