@@ -24,7 +24,6 @@ logger = logging.getLogger("orchestrator")
 class Stage(str, Enum):
     DEVELOPMENT = "development"
     TESTING = "testing"
-    CODE_REVIEW = "code_review"
     PR_CREATION = "pr_creation"
     DEPLOYMENT = "deployment"
     COMPLETED = "completed"
@@ -81,12 +80,9 @@ class Orchestrator:
     TRANSITIONS = {
         (Stage.DEVELOPMENT, StageResult.SUCCESS): Stage.TESTING,
         (Stage.DEVELOPMENT, StageResult.FAILURE): Stage.FAILED,
-        (Stage.TESTING, StageResult.SUCCESS): Stage.CODE_REVIEW,
+        (Stage.TESTING, StageResult.SUCCESS): Stage.PR_CREATION,
         (Stage.TESTING, StageResult.FAILURE): Stage.DEVELOPMENT,
         (Stage.TESTING, StageResult.RETRY): Stage.TESTING,
-        (Stage.CODE_REVIEW, StageResult.SUCCESS): Stage.PR_CREATION,
-        (Stage.CODE_REVIEW, StageResult.FAILURE): Stage.FAILED,
-        (Stage.CODE_REVIEW, StageResult.RETRY): Stage.TESTING,
         (Stage.PR_CREATION, StageResult.SUCCESS): Stage.COMPLETED,
         (Stage.PR_CREATION, StageResult.FAILURE): Stage.FAILED,
     }

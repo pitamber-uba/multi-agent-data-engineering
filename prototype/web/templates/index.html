@@ -712,16 +712,11 @@ select.ai-select {
               <span class="stage-label">Testing</span>
             </div>
             <div class="stage-connector" id="conn-2"></div>
-            <div class="stage-node" id="stage-code_review">
-              <div class="stage-icon">&#128269;</div>
-              <span class="stage-label">Code Review</span>
-            </div>
-            <div class="stage-connector" id="conn-3"></div>
             <div class="stage-node" id="stage-pr_creation">
               <div class="stage-icon">&#128640;</div>
               <span class="stage-label">PR Creation</span>
             </div>
-            <div class="stage-connector" id="conn-4"></div>
+            <div class="stage-connector" id="conn-3"></div>
             <div class="stage-node" id="stage-completed">
               <div class="stage-icon">&#10004;</div>
               <span class="stage-label">Done</span>
@@ -975,8 +970,8 @@ function streamLogs(jobId) {
   };
 }
 
-const stageOrder = ['development', 'testing', 'code_review', 'pr_creation', 'completed'];
-const connectors = ['conn-1', 'conn-2', 'conn-3', 'conn-4'];
+const stageOrder = ['development', 'testing', 'pr_creation', 'completed'];
+const connectors = ['conn-1', 'conn-2', 'conn-3'];
 
 function resetStages() {
   stageOrder.forEach(s => {

@@ -32,7 +32,7 @@ from fastapi.responses import HTMLResponse, StreamingResponse  # type: ignore[im
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from orchestrator import Orchestrator, WorkflowConfig, Stage, StageResult, HandoffEnvelope
-from agents import DevelopmentAgent, TestingAgent, CodeReviewAgent, PullRequestAgent
+from agents import DevelopmentAgent, TestingAgent, PullRequestAgent
 
 logging.basicConfig(
     level=logging.INFO,
@@ -188,7 +188,6 @@ def _run_workflow_thread(job_id: str, spec_name: str, ai_provider: str, ai_model
         agents_map = {
             Stage.DEVELOPMENT: DevelopmentAgent(ai_provider=ai),
             Stage.TESTING: TestingAgent(ai_provider=ai),
-            Stage.CODE_REVIEW: CodeReviewAgent(ai_provider=ai),
             Stage.PR_CREATION: PullRequestAgent(ai_provider=ai),
         }
 

@@ -46,7 +46,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent))
 
 from orchestrator import Orchestrator, WorkflowConfig, Stage
-from agents import DevelopmentAgent, TestingAgent, CodeReviewAgent, PullRequestAgent
+from agents import DevelopmentAgent, TestingAgent, PullRequestAgent
 
 logging.basicConfig(
     level=logging.INFO,
@@ -83,7 +83,6 @@ def build_agents(config: WorkflowConfig) -> dict:
     return {
         Stage.DEVELOPMENT: DevelopmentAgent(ai_provider=ai),
         Stage.TESTING: TestingAgent(ai_provider=ai),
-        Stage.CODE_REVIEW: CodeReviewAgent(ai_provider=ai),
         Stage.PR_CREATION: PullRequestAgent(ai_provider=ai),
     }
 
