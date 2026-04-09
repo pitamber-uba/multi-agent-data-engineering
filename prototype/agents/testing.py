@@ -102,10 +102,16 @@ After fixing, run:
             return False
 
     def _checkout(self, repo: Path, branch: str):
-        subprocess.run(
+        result = subprocess.run(
             ["git", "checkout", branch],
-            cwd=repo, capture_output=True, text=True, check=True,
+            cwd=repo, capture_output=True, text=True,
         )
+        if result.returncode != 0:
+            self.logger.warning("Normal checkout failed — forcing")
+            subprocess.run(
+                ["git", "checkout", "--force", branch],
+                cwd=repo, capture_output=True, text=True, check=True,
+            )
 
     def _run_linting(self, repo: Path) -> tuple[bool, str]:
         self.logger.info("Running ruff linter...")

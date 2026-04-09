@@ -372,7 +372,11 @@ class TestValidate:
     # --- Git operations ---
 
     def _create_branch(self, repo: Path, branch: str, base: str):
-        self._git(repo, "checkout", base)
+        try:
+            self._git(repo, "checkout", base)
+        except subprocess.CalledProcessError:
+            self.logger.warning("Normal checkout failed — forcing checkout to bypass parent-repo changes")
+            self._git(repo, "checkout", "--force", base)
         try:
             self._git(repo, "pull", "origin", base)
         except subprocess.CalledProcessError:
@@ -380,7 +384,10 @@ class TestValidate:
         try:
             self._git(repo, "checkout", "-b", branch)
         except subprocess.CalledProcessError:
-            self._git(repo, "checkout", branch)
+            try:
+                self._git(repo, "checkout", branch)
+            except subprocess.CalledProcessError:
+                self._git(repo, "checkout", "--force", branch)
         self.logger.info(f"On branch: {branch}")
 
     def _load_spec(self, spec_path: str) -> dict:
