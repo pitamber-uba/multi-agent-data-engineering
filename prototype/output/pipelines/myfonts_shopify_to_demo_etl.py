@@ -50,26 +50,20 @@ class MyFontsShopifyToDemoETL:
 
     def validate(self, df):
         self.logger.info("Starting quality checks")
+        # row_count_gt: 0
         if len(df) <= 0:
             self.logger.error("Validation failed: Row count is 0")
             raise ValueError("Row count is 0")
         self.logger.info("Validation passed: Row count > 0")
         
-        # Check required fields
+        # required_fields_not_null: id, process_at
+        # column_not_null: id, process_at
         required_fields = ['id', 'process_at']
         for field in required_fields:
             if field not in df.columns:
                 self.logger.error(f"Validation failed: {field} column missing")
                 raise ValueError(f"{field} column missing")
             if df[field].isnull().any():
-                self.logger.error(f"Validation failed: {field} column contains nulls")
-                raise ValueError(f"{field} column contains nulls")
-            self.logger.info(f"Validation passed: {field} column not null")
-        
-        # Check column not null
-        column_not_null = ['id', 'process_at']
-        for field in column_not_null:
-            if field in df.columns and df[field].isnull().any():
                 self.logger.error(f"Validation failed: {field} column contains nulls")
                 raise ValueError(f"{field} column contains nulls")
             self.logger.info(f"Validation passed: {field} column not null")
