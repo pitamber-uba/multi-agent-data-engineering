@@ -24,7 +24,9 @@ class ExtensisEventsIngestionPipeline:
         self.logger.info("Validating data...")
         if df.empty:
             raise ValueError("Dataframe is empty")
-        required_cols = ['event_type', 'gcid', 'profile_id']
+        # Updated required fields based on spec:
+        # mtf_id, user, timestamp, eventName
+        required_cols = ['mtf_id', 'user', 'timestamp', 'eventName']
         for col in required_cols:
             if col not in df.columns:
                 raise ValueError(f"Missing column: {col}")
