@@ -53,8 +53,12 @@ class EcommerceOrderAnalyticsETL:
         self.logger.info("Transformation: Cleaned strings.")
 
         # 3. Parse dates
-        for col, fmt in [('created_at', '%Y-%m-%d %H:%M:%S'), ('last_attempt_on', '%Y-%m-%d %H:%M:%S'), ('process_at', '%Y-%m-%d %H:%M:%S')]:
-            df[col] = pd.to_datetime(df[col], format=fmt, errors='coerce')
+        for col, cfg in {
+            'created_at': {'format': '%Y-%m-%d %H:%M:%S'},
+            'last_attempt_on': {'format': '%Y-%m-%d %H:%M:%S'},
+            'process_at': {'format': '%Y-%m-%d %H:%M:%S'}
+        }.items():
+            df[col] = pd.to_datetime(df[col], format=cfg['format'], errors='coerce')
         self.logger.info("Transformation: Parsed dates.")
 
         # 4. Derive email_domain
@@ -122,9 +126,7 @@ class EcommerceOrderAnalyticsETL:
             'order_name': 'shopify_order_name', 'process_at': 'order_processed_at'
         }
         df.rename(columns=rename_map, inplace=True)
-        # Ensure processed_date exists
-        if 'processed_date' not in df.columns:
-            df['processed_date'] = df['order_processed_at']
+        df['processed_date'] = df['order_processed_at']
         self.logger.info("Transformation: Renamed columns.")
 
         # 14. sort_rows
