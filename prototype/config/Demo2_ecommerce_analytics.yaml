@@ -1,0 +1,269 @@
+pipeline:
+  name: ecommerce_order_analytics_etl
+  ticket: "TICKET-002"
+  description: >
+    Complex ETL pipeline that extracts the first 5000 orders from
+    MyFonts_Legacy.myfonts_shopify_data (using SQL LIMIT 5000 — see extract.row_limit),
+    applies 12 transformation steps including type casting, string cleaning,
+    date parsing, derived columns, conditional logic, aggregation bucketing,
+    deduplication, null filling, column renaming, row filtering, sorting,
+    and final column selection — then loads the analytics-ready result
+    into MyEtlDemo.order_analytics.
+
+    The pipeline must build SQLAlchemy connection URLs from the extract
+    and load config below using pymysql as the driver:
+      mysql+pymysql://{username}:{password}@{host}:{port}/{database}
+
+    The pipeline must also generate a main.py entry point that reads
+    the password from the SOURCE_DB_PASSWORD and TARGET_DB_PASSWORD
+    environment variables (using os.environ), constructs the URLs,
+    instantiates the pipeline class, and calls run().
+
+  extract:
+    source: mysql
+    driver: pymysql
+    host: localhost
+    port: 3306
+    username: root
+    password_env_var: SOURCE_DB_PASSWORD
+    database: MyFonts_Legacy
+    table: myfonts_shopify_data
+    strategy: full_load
+    row_limit: 5000                                # LIMIT 5000 in the SELECT query
+
+  transform:
+    steps:
+      # ── Step 1: Cast data types ──────────────────────────────────────
+      - cast_types:
+          description: "Convert columns to correct data types before any other work."
+          mappings:
+            id: int
+            attempt_count: int
+            order_id: str
+            order_name: str
+            email: str
+
+      # ── Step 2: Clean strings ────────────────────────────────────────
+      - clean_strings:
+          description: "Strip whitespace and lowercase text columns to normalize data."
+          columns: [email, font_name, variant_title, source_name, product_type]
+          operations:
+            - strip
+            - lowercase
+
+      # ── Step 3: Parse dates ──────────────────────────────────────────
+      - parse_dates:
+          description: "Convert string dates to proper datetime objects. Coerce invalid dates to NaT."
+          columns:
+            created_at:
+              format: "%Y-%m-%d %H:%M:%S"
+              errors: coerce
+            process_at:
+              format: "%Y-%m-%d %H:%M:%S"
+              errors: coerce
+            last_attempt_on:
+              format: "%Y-%m-%d %H:%M:%S"
+              errors: coerce
+
+      # ── Step 4: Derive email domain ──────────────────────────────────
+      - derive_column:
+          description: "Extract domain from email (part after @). Set to None if email is null or has no @."
+          target_field: email_domain
+          source_field: email
+          expression: "email.split('@')[1] if isinstance(email, str) and '@' in email else None"
+
+      # ── Step 5: Classify email provider ──────────────────────────────
+      - conditional_column:
+          description: >
+            Classify each email domain into a provider category.
+            gmail.com -> 'Gmail', outlook/hotmail/live -> 'Microsoft',
+            yahoo -> 'Yahoo', everything else -> 'Corporate'.
+          target_field: email_provider
+          source_field: email_domain
+          conditions:
+            - when: "email_domain == 'gmail.com'"
+              then: "Gmail"
+            - when: "email_domain in ('outlook.com', 'hotmail.com', 'live.com')"
+              then: "Microsoft"
+            - when: "email_domain is not None and 'yahoo' in email_domain"
+              then: "Yahoo"
+            - default: "Corporate"
+
+      # ── Step 6: Bucket attempt counts ────────────────────────────────
+      - bucket_column:
+          description: >
+            Create attempt_bucket from attempt_count:
+            0 -> 'no_attempts', 1 -> 'single', 2-3 -> 'moderate', 4+ -> 'high'.
+          target_field: attempt_bucket
+          source_field: attempt_count
+          buckets:
+            - range: [0, 0]
+              label: no_attempts
+            - range: [1, 1]
+              label: single
+            - range: [2, 3]
+              label: moderate
+            - range: [4, null]
+              label: high
+
+      # ── Step 7: Derive processing lag ────────────────────────────────
+      - derive_column:
+          description: >
+            Calculate the number of days between created_at and process_at.
+            Result is a float (fractional days). Set to None if either date is NaT.
+          target_field: processing_lag_days
+          source_field: null
+          expression: "(process_at - created_at).total_seconds() / 86400 if pd.notna(created_at) and pd.notna(process_at) else None"
+
+      # ── Step 8: Flag reprocessed records ─────────────────────────────
+      - derive_column:
+          description: >
+            Create a boolean flag is_reprocessed_flag: True if is_reprocessed == 1
+            or attempt_count > 1, else False.
+          target_field: is_reprocessed_flag
+          source_field: null
+          expression: "True if (is_reprocessed == 1 or attempt_count > 1) else False"
+
+      # ── Step 9: Fill nulls ──────────────────────────────────────────
+      - fill_nulls:
+          description: "Replace null values with sensible defaults so downstream consumers don't break."
+          mappings:
+            email: "unknown@unknown.com"
+            email_domain: "unknown"
+            email_provider: "Unknown"
+            font_name: "N/A"
+            variant_title: "N/A"
+            source_name: "N/A"
+            product_type: "N/A"
+            attempt_count: 0
+            processing_lag_days: -1.0
+
+      # ── Step 10: Deduplicate ─────────────────────────────────────────
+      - deduplicate:
+          description: "Remove duplicate rows based on order_id + email, keeping the latest by created_at."
+          subset: [order_id, email]
+          keep: last
+          sort_by: created_at
+
+      # ── Step 11: Filter rows ─────────────────────────────────────────
+      - filter_rows:
+          description: "Exclude rows where status is 'failed' — only keep successful or in-progress records."
+          condition: "status != 'failed'"
+
+      # ── Step 12: Drop original columns no longer needed ──────────────
+      - drop_columns:
+          columns: [skuid, eula_id, is_reprocessed, md5]
+
+      # ── Step 13: Rename columns for analytics schema ─────────────────
+      - rename_columns:
+          mappings:
+            id: order_record_id
+            created_at: order_created_at
+            process_at: order_processed_at
+            order_id: shopify_order_id
+            order_name: shopify_order_name
+            attempt_count: total_attempts
+            last_attempt_on: last_attempt_date
+            process_at_date: processed_date
+            font_identifier: font_id
+
+      # ── Step 14: Sort output ─────────────────────────────────────────
+      - sort_rows:
+          by: [order_created_at, shopify_order_id]
+          ascending: [false, true]
+
+      # ── Step 15: Select final columns in order ──────────────────────
+      - select_columns:
+          columns:
+            - order_record_id
+            - order_created_at
+            - order_processed_at
+            - shopify_order_id
+            - shopify_order_name
+            - email
+            - email_domain
+            - email_provider
+            - variant_title
+            - font_name
+            - font_id
+            - source_name
+            - product_type
+            - status
+            - total_attempts
+            - attempt_bucket
+            - last_attempt_date
+            - is_reprocessed_flag
+            - processing_lag_days
+            - processed_date
+
+  quality_checks:
+    pre_load:
+      - row_count_gt: 0
+      - required_fields_not_null:
+          fields: [order_record_id, order_processed_at, email]
+      - column_not_null:
+          - order_record_id
+          - order_processed_at
+      - unique_check:
+          columns: [order_record_id]
+      - value_range:
+          column: total_attempts
+          min: 0
+          max: 100
+      - allowed_values:
+          column: email_provider
+          values: [Gmail, Microsoft, Yahoo, Corporate, Unknown]
+      - allowed_values:
+          column: attempt_bucket
+          values: [no_attempts, single, moderate, high]
+
+  load:
+    destinations:
+      - name: order_analytics_table
+        engine: mysql
+        driver: pymysql
+        host: localhost
+        port: 3306
+        username: root
+        password_env_var: TARGET_DB_PASSWORD
+        database: MyEtlDemo
+        table: order_analytics
+        mode: replace
+        chunksize: 2000
+        auto_create_db: true
+        auto_create_table: true
+        target_ddl: |
+          CREATE TABLE IF NOT EXISTS `order_analytics` (
+            `order_record_id`      bigint unsigned NOT NULL,
+            `order_created_at`     datetime(6) DEFAULT NULL,
+            `order_processed_at`   datetime(6) DEFAULT NULL,
+            `shopify_order_id`     varchar(255) DEFAULT NULL,
+            `shopify_order_name`   varchar(255) DEFAULT NULL,
+            `email`                varchar(255) NOT NULL,
+            `email_domain`         varchar(255) DEFAULT NULL,
+            `email_provider`       varchar(50) DEFAULT NULL,
+            `variant_title`        varchar(255) DEFAULT NULL,
+            `font_name`            varchar(255) DEFAULT NULL,
+            `font_id`              varchar(255) DEFAULT NULL,
+            `source_name`          varchar(255) DEFAULT NULL,
+            `product_type`         varchar(255) DEFAULT NULL,
+            `status`               varchar(50) DEFAULT NULL,
+            `total_attempts`       int DEFAULT 0,
+            `attempt_bucket`       varchar(20) DEFAULT NULL,
+            `last_attempt_date`    datetime DEFAULT NULL,
+            `is_reprocessed_flag`  tinyint(1) DEFAULT 0,
+            `processing_lag_days`  decimal(10,2) DEFAULT NULL,
+            `processed_date`       datetime DEFAULT NULL,
+            PRIMARY KEY (`order_record_id`),
+            INDEX `idx_email_domain` (`email_domain`),
+            INDEX `idx_status` (`status`),
+            INDEX `idx_order_created` (`order_created_at`),
+            INDEX `idx_provider` (`email_provider`)
+          ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
+
+  dependencies:
+    python: "3.12"
+    packages:
+      - pandas
+      - sqlalchemy
+      - pymysql
