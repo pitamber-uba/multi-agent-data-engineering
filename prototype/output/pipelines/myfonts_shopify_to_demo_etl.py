@@ -10,7 +10,7 @@ class MyFontsShopifyToDemoETL:
 
     def extract(self):
         self.logger.info("Extracting data from MyFonts_Legacy.myfonts_shopify_data")
-        query = "SELECT * FROM myfonts_shopify_data LIMIT 2000"
+        query = "SELECT * FROM myfonts_shopify_data LIMIT 3000"
         df = pd.read_sql(query, self.source_engine)
         self.logger.info(f"Extracted {len(df)} rows from MyFonts_Legacy.myfonts_shopify_data")
         return df
@@ -58,13 +58,9 @@ class MyFontsShopifyToDemoETL:
         # Check required fields
         required_fields = ['id', 'process_at']
         for field in required_fields:
-            if df[field].isnull().any():
-                self.logger.error(f"Validation failed: {field} column contains nulls")
-                raise ValueError(f"{field} column contains nulls")
-            self.logger.info(f"Validation passed: {field} column not null")
-        
-        # Check column not null
-        for field in required_fields:
+            if field not in df.columns:
+                self.logger.error(f"Validation failed: {field} column missing")
+                raise ValueError(f"{field} column missing")
             if df[field].isnull().any():
                 self.logger.error(f"Validation failed: {field} column contains nulls")
                 raise ValueError(f"{field} column contains nulls")
