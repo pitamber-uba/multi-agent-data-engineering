@@ -11,7 +11,7 @@ class MonotypeCustomerToPersonalDetails:
 
     def extract(self):
         self.logger.info("Starting extraction from customer table")
-        query = "SELECT * FROM customer"
+        query = "SELECT * FROM customer LIMIT 3000"
         self.df = pd.read_sql(query, self.source_engine)
         self.logger.info(f"Extracted {len(self.df)} rows from customer")
         return self.df
