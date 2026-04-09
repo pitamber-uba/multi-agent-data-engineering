@@ -1,19 +1,30 @@
 import os
-from pipelines.myfonts_shopify_to_demo_etl import MyFontsShopifyToDemoETL
+import logging
+from pipelines.monotype_customer_to_personal_details import MonotypeCustomerToPersonalDetails
+
+logging.basicConfig(level=logging.INFO)
 
 def main():
-    # Ensure environment variables are set
-    if "SOURCE_DB_PASSWORD" not in os.environ or "TARGET_DB_PASSWORD" not in os.environ:
-        raise EnvironmentError("SOURCE_DB_PASSWORD and TARGET_DB_PASSWORD must be set.")
+    source_user = "root"
+    source_pass = os.environ.get("SOURCE_DB_PASSWORD")
+    source_host = "localhost"
+    source_port = 3306
+    source_db = "Monotype"
     
-    source_password = os.environ["SOURCE_DB_PASSWORD"]
-    target_password = os.environ["TARGET_DB_PASSWORD"]
-    
-    source_url = f"mysql+pymysql://root:{source_password}@localhost:3306/MyFonts_Legacy"
-    target_url = f"mysql+pymysql://root:{target_password}@localhost:3306/MyEtlDemo"
-    
-    etl = MyFontsShopifyToDemoETL(source_url, target_url)
-    etl.run()
+    target_user = "root"
+    target_pass = os.environ.get("TARGET_DB_PASSWORD")
+    target_host = "localhost"
+    target_port = 3306
+    target_db = "Monotype"
+
+    if not source_pass or not target_pass:
+        raise ValueError("SOURCE_DB_PASSWORD and TARGET_DB_PASSWORD must be set")
+
+    source_url = f"mysql+mysqldb://{source_user}:{source_pass}@{source_host}:{source_port}/{source_db}"
+    target_url = f"mysql+mysqldb://{target_user}:{target_pass}@{target_host}:{target_port}/{target_db}"
+
+    pipeline = MonotypeCustomerToPersonalDetails(source_url, target_url)
+    pipeline.run()
 
 if __name__ == "__main__":
     main()

@@ -1,0 +1,85 @@
+pipeline:
+  name: monotype_customer_to_personal_details
+  ticket: "TICKET-12333"
+  description: >
+    Full-load ETL pipeline that connects to a localhost MySQL database,
+    reads all rows from Monotype.customer (columns: name, email, address,
+    orgName), derives a new 'domain' column by extracting the portion of
+    the email after the '@' symbol, and loads the result into
+    Monotype.personalDetails.
+
+    The pipeline must build SQLAlchemy connection URLs from the extract
+    and load config below using mysqldb (mysqlclient) as the driver:
+      mysql+mysqldb://{username}:{password}@{host}:{port}/{database}
+
+    The pipeline must also generate a main.py entry point that reads
+    the password from the SOURCE_DB_PASSWORD and TARGET_DB_PASSWORD
+    environment variables (using os.environ), constructs the URLs,
+    instantiates the pipeline class, and calls run().
+
+  extract:
+    source: mysql
+    driver: mysqldb
+    host: localhost
+    port: 3306
+    username: root
+    password_env_var: SOURCE_DB_PASSWORD
+    database: Monotype
+    table: customer
+    strategy: full_load
+
+  transform:
+    steps:
+      - derive_domain:
+          source_field: email
+          expression: "email.split('@')[1] if '@' in email else None"
+          target_field: domain
+          on_null_email: set_domain_null
+
+      - select_columns:
+          columns:
+            - name
+            - email
+            - address
+            - orgName
+            - domain
+
+  quality_checks:
+    pre_load:
+      - row_count_gt: 0
+      - required_fields_not_null:
+          fields: [name, email]
+      - column_not_null:
+          - name
+          - email
+
+  load:
+    destinations:
+      - name: monotype_personal_details
+        engine: mysql
+        driver: mysqldb
+        host: localhost
+        port: 3306
+        username: root
+        password_env_var: TARGET_DB_PASSWORD
+        database: Monotype
+        table: personalDetails
+        mode: append
+        chunksize: 1000
+        auto_create_db: true
+        auto_create_table: true
+        target_ddl: |
+          CREATE TABLE IF NOT EXISTS `personalDetails` (
+            `name`     varchar(255) DEFAULT NULL,
+            `email`    varchar(255) DEFAULT NULL,
+            `address`  varchar(500) DEFAULT NULL,
+            `orgName`  varchar(255) DEFAULT NULL,
+            `domain`   varchar(255) DEFAULT NULL
+          ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
+
+  dependencies:
+    python: "3.12"
+    packages:
+      - pandas
+      - sqlalchemy
+      - mysqlclient
