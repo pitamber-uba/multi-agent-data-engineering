@@ -1,0 +1,47 @@
+pipeline:
+  name: weather_etl
+  ticket: "TICKET-401"
+  description: >
+    Simple ETL pipeline that reads daily weather data from a CSV,
+    converts temperature from Fahrenheit to Celsius, filters out
+    incomplete records, and loads the cleaned data into a SQLite table.
+
+  extract:
+    source: csv
+    path: "data/weather_daily.csv"
+    columns:
+      - date
+      - city
+      - temp_f
+      - humidity
+      - wind_speed
+
+  transform:
+    steps:
+      - convert_temperature:
+          formula: "(temp_f - 32) * 5 / 9"
+          output_column: temp_c
+
+      - drop_incomplete:
+          condition: "no nulls in [date, city, temp_f]"
+
+  quality_checks:
+    pre_load:
+      - row_count_gt: 0
+      - column_not_null:
+          - date
+          - city
+          - temp_c
+
+  load:
+    destinations:
+      - name: local_db
+        engine: sqlite
+        table: daily_weather
+        mode: replace
+        columns:
+          - date
+          - city
+          - temp_c
+          - humidity
+          - wind_speed

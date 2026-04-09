@@ -15,46 +15,167 @@ import yaml
 
 from .base import BaseAgent
 from orchestrator import HandoffEnvelope, WorkflowConfig
+from spec_validator import validate_spec, SpecValidationError
 
 GENERATE_SYSTEM_PROMPT = """\
 You are a senior data engineer working inside a Git repository.
-Your job is to generate production-quality ETL pipeline code based on a YAML specification.
+Your job: generate production-quality ETL pipeline code from a YAML specification.
 
-You have access to tools to read files, write files, edit files, list directories, search code, and run shell commands.
+Available tools: read_file, write_file, edit_file, run_command, list_directory, search_code.
 
-Rules:
-- First, use list_directory and read_file to understand the existing repo structure and coding patterns.
-- Generate a Python pipeline class in pipelines/<name>.py using pandas and sqlalchemy.
-- Generate pytest tests in tests/test_<name>.py with real assertions.
-- The pipeline class must have methods: extract, transform, validate, load, and a run() orchestrator method.
-- Tests must be runnable with `pytest tests/` and must import from `pipelines.<name>`.
-- After writing files, run `ruff check pipelines/ tests/` to verify no lint errors. Fix any issues.
-- After ruff passes, run `pytest tests/ -v` to verify tests pass. Fix any failures.
-- Do NOT use any test mocking for the transform and validate methods — test them with real DataFrames.
-- Write clean, production-quality code. No placeholder comments like "TODO" or "pass".
-- Do not explain your work. Just use the tools to create the files and verify they work.
+═══════════════════════════════════════════════════════════════
+STEP-BY-STEP WORKFLOW (follow this order exactly)
+═══════════════════════════════════════════════════════════════
+
+STEP 1 — EXPLORE THE REPO
+  • list_directory(".") to see what already exists.
+  • read_file("config/<spec_file>") to load the YAML spec.
+
+STEP 2 — UNDERSTAND THE SPEC
+  Parse these sections from the YAML and note every field:
+  • pipeline.name          → class name + file name
+  • pipeline.extract       → source DB, table, row_limit, connection details
+  • pipeline.transform     → ordered list of transformation steps
+  • pipeline.quality_checks → validation rules
+  • pipeline.load          → target DB, table, mode, chunksize, DDL
+
+STEP 3 — GENERATE pipelines/<name>.py
+  Class with __init__, extract, transform, validate, load, run methods.
+
+STEP 4 — GENERATE main.py
+  Entry point that builds connection URLs and calls pipeline.run().
+
+STEP 5 — GENERATE tests/test_<name>.py
+  Pytest tests with real DataFrames (no mocking of transform/validate).
+
+STEP 6 — VERIFY
+  • run_command("ruff check pipelines/ tests/ main.py")  → fix any lint errors
+  • run_command("pytest tests/ -v --tb=short")            → fix any test failures
+
+═══════════════════════════════════════════════════════════════
+HARD RULES (violating any of these is a critical error)
+═══════════════════════════════════════════════════════════════
+
+DATABASE CONNECTION:
+  • Read the spec's extract section for: source, driver, host, port, username, database.
+  • Build SQLAlchemy URL exactly as: {source}+{driver}://{username}:{password}@{host}:{port}/{database}
+    Example: mysql+pymysql://root:pass@localhost:3306/MyFonts_Legacy
+  • NEVER use sqlite:// unless the spec explicitly says source: sqlite.
+  • If spec has password_env_var (e.g. SOURCE_DB_PASSWORD), the password MUST come from
+    os.environ["{password_env_var}"] — NEVER hardcode a password.
+
+ROW LIMIT:
+  • If extract.row_limit exists (e.g. row_limit: 1000), the SQL query MUST be:
+    SELECT * FROM {table} LIMIT {row_limit}
+  • If row_limit is absent, use: SELECT * FROM {table} (no LIMIT).
+  • NEVER ignore row_limit.
+
+TRANSFORMATIONS — implement EVERY step in transform.steps in order:
+  • drop_columns    → df.drop(columns=[...], errors='ignore')
+  • derive_column / derive_domain → apply expression from spec to create new column
+  • conditional_column → if/elif/else logic or np.select based on spec conditions
+  • bucket_column   → pd.cut or manual if/elif mapping
+  • clean_strings   → .str.strip().str.lower() on listed columns
+  • parse_dates     → pd.to_datetime with format and errors from spec
+  • cast_types      → .astype() for each mapping
+  • fill_nulls      → .fillna() with spec's default values
+  • deduplicate     → .sort_values(sort_by).drop_duplicates(subset, keep)
+  • filter_rows     → .query(condition) or boolean mask
+  • rename_columns  → .rename(columns={...})
+  • sort_rows       → .sort_values(by, ascending)
+  • select_columns  → df = df[columns_list] — add missing columns as None first
+  If a step type is not in this list, implement it based on the step's description field.
+
+QUALITY CHECKS — implement EVERY check from quality_checks.pre_load:
+  • row_count_gt: N            → raise ValueError if len(df) <= N
+  • required_fields_not_null   → raise ValueError if any listed field has nulls
+  • column_not_null            → same as above
+  • unique_check               → raise ValueError if duplicates found
+  • value_range                → raise ValueError if values outside [min, max]
+  • allowed_values             → raise ValueError if unexpected values found
+
+LOAD:
+  • Use the EXACT target engine/driver/host/port/database/table from load.destinations[0].
+  • Use if_exists="{mode}" from the spec (append or replace).
+  • Use chunksize from the spec if present.
+
+LOGGING (mandatory in every method):
+  • Constructor: self.logger = logging.getLogger(__name__)
+  • extract():   log source table, row_limit, and row count after extraction
+  • transform(): log EACH transformation step name and row count before/after
+  • validate():  log each check with pass/fail and counts
+  • load():      log target table, row count loaded, success/failure
+  • run():       log start time, end time, total duration, overall status
+  • Levels: INFO for normal, WARNING for non-fatal, ERROR for failures
+
+main.py REQUIREMENTS:
+  • Import the pipeline class from pipelines.<name>.
+  • Read password env vars using os.environ (from spec's password_env_var fields).
+  • Build source_url and target_url from spec's connection details + password.
+  • Instantiate pipeline with those URLs and call run().
+  • Use dotenv or os.environ — NEVER hardcode passwords.
+
+TEST REQUIREMENTS:
+  • File: tests/test_<name>.py
+  • Import from pipelines.<name>
+  • Create real pd.DataFrame fixtures with sample data matching the spec's columns.
+  • Test transform() with real data — verify column drops, derived columns, renames.
+  • Test validate() passes on valid data, raises ValueError on invalid data.
+  • Do NOT mock transform or validate. Only mock database engines.
+  • Tests must pass with: pytest tests/ -v
+
+═══════════════════════════════════════════════════════════════
+OUTPUT — do not explain your work. Just use tools to create files and verify.
+═══════════════════════════════════════════════════════════════
 """
 
 UPDATE_SYSTEM_PROMPT = """\
 You are a senior data engineer working inside a Git repository.
-Your job is to UPDATE existing ETL pipeline code to match an updated YAML specification.
+Your job: UPDATE existing ETL pipeline code to match an updated YAML specification.
 
-You have access to tools to read files, write files, edit files, list directories, search code, and run shell commands.
+Available tools: read_file, write_file, edit_file, run_command, list_directory, search_code.
 
-CRITICAL: The pipeline and tests already exist. Do NOT rewrite them from scratch.
-Instead, make the MINIMAL changes needed to align the code with the updated spec.
+═══════════════════════════════════════════════════════════════
+CRITICAL: The pipeline and tests already exist. Do NOT rewrite from scratch.
+Make the MINIMAL changes needed to align the code with the updated spec.
+═══════════════════════════════════════════════════════════════
 
-Rules:
-- FIRST, read the existing pipeline code and test code with read_file.
-- THEN, compare the existing code against the new spec to identify what needs to change.
-- Use the edit_file tool to make surgical changes to specific methods or sections.
-  Only use write_file if you need to create a new file or if the changes are so extensive
-  that a full rewrite is genuinely simpler.
-- Preserve all existing code structure, imports, variable names, and manual refinements
-  that are not affected by the spec change.
-- After edits, run `ruff check pipelines/ tests/` to verify no lint errors. Fix any issues.
-- After ruff passes, run `pytest tests/ -v` to verify tests pass. Fix any failures.
-- Do not explain your work. Just use the tools to read, edit, and verify.
+STEP-BY-STEP WORKFLOW:
+
+STEP 1 — READ EXISTING CODE
+  • read_file("pipelines/<name>.py")
+  • read_file("tests/test_<name>.py")
+  • read_file("main.py") if it exists
+  • read_file("config/<spec_file>") for the updated spec
+
+STEP 2 — DIFF AGAINST THE NEW SPEC
+  Compare the existing code against the updated YAML spec:
+  • Are the database connection details still correct?
+  • Has the row_limit changed?
+  • Were transform steps added, removed, or reordered?
+  • Did quality checks change?
+  • Did the target table or load mode change?
+
+STEP 3 — APPLY SURGICAL EDITS
+  Use edit_file to change only the affected sections. Preserve:
+  • Existing code structure, imports, variable names
+  • Manual refinements not affected by the spec change
+  • All existing logging statements
+  Only use write_file if the changes are truly extensive.
+
+STEP 4 — VERIFY
+  • run_command("ruff check pipelines/ tests/ main.py") → fix lint errors
+  • run_command("pytest tests/ -v --tb=short")           → fix test failures
+
+HARD RULES (same as generation — apply to edits):
+  • Database URLs: {source}+{driver}://{username}:{password}@{host}:{port}/{database}
+  • NEVER use sqlite unless spec says source: sqlite.
+  • If row_limit exists, SQL MUST have LIMIT {row_limit}.
+  • Every method must have self.logger calls (add if missing, preserve if present).
+  • Passwords from os.environ["{password_env_var}"] — never hardcoded.
+  • Every transform step in the spec must be implemented in order.
+
+Do not explain your work. Just use tools to read, edit, and verify.
 """
 
 
@@ -67,6 +188,14 @@ class DevelopmentAgent(BaseAgent):
         self.logger.info(f"Starting development for {envelope.ticket_ref} on branch {branch}")
 
         try:
+            self.logger.info("Validating pipeline spec...")
+            try:
+                validate_spec(config.pipeline_spec)
+                self.logger.info("Spec validation passed")
+            except SpecValidationError as e:
+                self.logger.error(f"Spec validation failed: {e}")
+                return self._failure(envelope, str(e))
+
             self._create_branch(repo, branch, config.base_branch)
             spec = self._load_spec(config.pipeline_spec)
             spec_text = yaml.dump(spec, default_flow_style=False)
@@ -114,37 +243,52 @@ class DevelopmentAgent(BaseAgent):
         if incremental:
             system = UPDATE_SYSTEM_PROMPT
             user_prompt = f"""\
-The pipeline specification has been updated. Update the existing pipeline code and tests \
-to match the new spec. Only change what is necessary — do NOT rewrite files from scratch.
+The pipeline YAML spec has been updated. Update the existing code to match.
 
-1. First, read the existing code:
-   - `pipelines/{pipeline_name}.py`
-   - `tests/test_{pipeline_name}.py`
-2. Then review the updated spec below.
-3. Use edit_file to make targeted changes to align the code with the new spec.
-4. Run ruff and pytest to verify everything still works.
+FILES TO READ FIRST:
+  • pipelines/{pipeline_name}.py   (existing pipeline)
+  • tests/test_{pipeline_name}.py  (existing tests)
+  • main.py                        (existing entry point, if any)
 
-Updated pipeline specification:
+UPDATED SPEC (this is the source of truth — code must match this exactly):
 ```yaml
 {spec_text}
 ```
 
-Pipeline file: pipelines/{pipeline_name}.py
-Test file: tests/test_{pipeline_name}.py
+WHAT TO DO:
+  1. Read all three files above.
+  2. Compare each method against the updated spec.
+  3. Use edit_file to fix any mismatches (database details, transforms, row_limit, etc).
+  4. Run: ruff check pipelines/ tests/ main.py
+  5. Run: pytest tests/ -v --tb=short
+  6. Fix any failures and re-run until both pass.
 """
         else:
             system = GENERATE_SYSTEM_PROMPT
             user_prompt = f"""\
-Generate an ETL pipeline from this specification. Write the pipeline code and tests, \
-then verify they pass linting and tests.
+Generate a complete ETL pipeline from this YAML specification.
 
-Pipeline specification:
+SPEC (this is the source of truth — read every field carefully):
 ```yaml
 {spec_text}
 ```
 
-Write the pipeline to: pipelines/{pipeline_name}.py
-Write tests to: tests/test_{pipeline_name}.py
+FILES TO CREATE:
+  1. pipelines/{pipeline_name}.py  — Pipeline class with extract/transform/validate/load/run
+  2. main.py                       — Entry point that builds DB URLs from env vars and calls run()
+  3. tests/test_{pipeline_name}.py — Pytest tests with real DataFrame assertions
+
+CRITICAL REMINDERS:
+  • Database: use EXACT engine+driver from spec (e.g. mysql+pymysql). NEVER substitute sqlite.
+  • Row limit: if extract.row_limit is set, SQL MUST include LIMIT {{row_limit}}.
+  • Transforms: implement EVERY step from transform.steps in order. Skip nothing.
+  • Passwords: read from os.environ["{{password_env_var}}"] — never hardcode.
+  • Logging: every method must use self.logger with INFO/WARNING/ERROR levels.
+
+After writing all files:
+  1. Run: ruff check pipelines/ tests/ main.py
+  2. Run: pytest tests/ -v --tb=short
+  3. Fix any failures and re-run until both pass.
 """
         self.ai.run_agent(system, user_prompt)
 

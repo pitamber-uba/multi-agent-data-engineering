@@ -75,6 +75,11 @@ def _build_langchain_tools(repo_tools: RepoTools) -> list:
     class ListDirectoryArgs(BaseModel):
         path: str = Field(description="Directory path relative to repo root. Use '.' for root.")
 
+    class EditFileArgs(BaseModel):
+        path: str = Field(description="Path relative to the repository root")
+        old_string: str = Field(description="Exact string to find (must be unique in the file)")
+        new_string: str = Field(description="Replacement string")
+
     class SearchCodeArgs(BaseModel):
         pattern: str = Field(description="Regex pattern to search for")
         file_glob: str = Field(default="", description="File glob to filter (e.g., '*.py'). Optional.")
@@ -98,6 +103,18 @@ def _build_langchain_tools(repo_tools: RepoTools) -> list:
                 "Write content to a file in the repository. Creates parent directories if needed."
             ),
             args_schema=WriteFileArgs,
+        ),
+        StructuredTool.from_function(
+            func=lambda path, old_string, new_string: repo_tools.execute_tool(
+                "edit_file", {"path": path, "old_string": old_string, "new_string": new_string}
+            ),
+            name="edit_file",
+            description=(
+                "Edit an existing file by replacing a specific string with new content. "
+                "Use instead of write_file when you only need to change part of a file. "
+                "The old_string must match exactly (including whitespace)."
+            ),
+            args_schema=EditFileArgs,
         ),
         StructuredTool.from_function(
             func=lambda command: repo_tools.execute_tool("run_command", {"command": command}),

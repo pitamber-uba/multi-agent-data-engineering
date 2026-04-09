@@ -22,3 +22,8 @@ sqlalchemy>=2.0
 pytest>=8.0
 pytest-cov>=4.1
 ruff>=0.4
+
+# Web UI
+fastapi>=0.115
+uvicorn[standard]>=0.30
+python-multipart>=0.0.9

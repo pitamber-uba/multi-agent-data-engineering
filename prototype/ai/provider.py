@@ -312,11 +312,15 @@ def is_ai_available() -> bool:
         return True
     if OPENAI_AVAILABLE and os.environ.get("OPENAI_API_KEY"):
         return True
+    if GEMINI_AVAILABLE and os.environ.get("GOOGLE_API_KEY"):
+        return True
     return False
 
 
 def get_default_provider() -> Optional[str]:
     """Determine which AI provider to use based on available keys."""
+    if os.environ.get("GOOGLE_API_KEY"):
+        return "gemini"
     if os.environ.get("ANTHROPIC_API_KEY"):
         return "anthropic"
     if os.environ.get("OPENAI_API_KEY"):
