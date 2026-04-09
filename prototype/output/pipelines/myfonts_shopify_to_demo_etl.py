@@ -10,7 +10,7 @@ class MyFontsShopifyToDemoETL:
 
     def extract(self):
         self.logger.info("Extracting data from MyFonts_Legacy.myfonts_shopify_data")
-        query = "SELECT * FROM myfonts_shopify_data LIMIT 1000"
+        query = "SELECT * FROM myfonts_shopify_data LIMIT 2000"
         df = pd.read_sql(query, self.source_engine)
         self.logger.info(f"Extracted {len(df)} rows from MyFonts_Legacy.myfonts_shopify_data")
         return df
@@ -23,6 +23,7 @@ class MyFontsShopifyToDemoETL:
         self.logger.info("Dropped columns: skuid, eula_id")
         
         # Derive domain
+        # expression: email.split('@')[1] if '@' in email else None
         def get_domain(email):
             if pd.isna(email) or '@' not in str(email):
                 return None
