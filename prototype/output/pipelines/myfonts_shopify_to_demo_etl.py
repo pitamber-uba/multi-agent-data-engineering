@@ -66,6 +66,14 @@ class MyFontsShopifyToDemoETL:
                 raise ValueError(f"{field} column contains nulls")
             self.logger.info(f"Validation passed: {field} column not null")
         
+        # Check column not null
+        column_not_null = ['id', 'process_at']
+        for field in column_not_null:
+            if field in df.columns and df[field].isnull().any():
+                self.logger.error(f"Validation failed: {field} column contains nulls")
+                raise ValueError(f"{field} column contains nulls")
+            self.logger.info(f"Validation passed: {field} column not null")
+        
         return True
 
     def load(self, df):
