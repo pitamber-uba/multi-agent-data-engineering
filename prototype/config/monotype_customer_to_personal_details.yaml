@@ -1,6 +1,6 @@
 pipeline:
   name: monotype_customer_to_personal_details
-  ticket: "TICKET-12333"
+  ticket: "TICKET-demo"
   description: >
     Full-load ETL pipeline that connects to a localhost MySQL database,
     reads all rows from Monotype.customer (columns: name, email, address,

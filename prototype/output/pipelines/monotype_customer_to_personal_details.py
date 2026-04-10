@@ -22,7 +22,7 @@ class MonotypeCustomerToPersonalDetails:
         # Step 1: derive_domain
         self.logger.info(f"Applying derive_domain. Rows before: {len(self.df)}")
         self.df['domain'] = self.df['email'].apply(
-            lambda x: x.split('@')[1] if isinstance(x, str) and '@' in x else None
+            lambda email: email.split('@')[1] if isinstance(email, str) and '@' in email else None
         )
         self.logger.info(f"Applied derive_domain. Rows after: {len(self.df)}")
 
@@ -50,6 +50,12 @@ class MonotypeCustomerToPersonalDetails:
             if self.df[field].isnull().any():
                 raise ValueError(f"Quality check failed: {field} contains nulls")
         self.logger.info("Passed: required_fields_not_null")
+
+        # column_not_null
+        for field in ['name', 'email']:
+            if self.df[field].isnull().any():
+                raise ValueError(f"Quality check failed: {field} contains nulls")
+        self.logger.info("Passed: column_not_null")
 
         return True
 
