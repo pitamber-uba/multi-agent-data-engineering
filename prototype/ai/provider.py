@@ -106,7 +106,7 @@ class AIProvider:
                 if not GEMINI_AVAILABLE:
                     raise ImportError("pip install google-genai")
                 self.api_key = api_key or os.environ.get("GOOGLE_API_KEY", "")
-                self.model = model or "gemini-2.5-flash"
+                self.model = model or "gemini-3.1-flash-lite-preview"
                 self.client = genai.Client(api_key=self.api_key)
             else:
                 raise ValueError(f"Unsupported provider: {provider}")
