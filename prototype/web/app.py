@@ -18,6 +18,9 @@ import logging
 import os
 import subprocess
 import sys
+
+from dotenv import load_dotenv
+load_dotenv(os.path.join(os.path.dirname(__file__), '..', '..', '.env'))
 import threading
 import time
 import uuid
