@@ -1,0 +1,116 @@
+pipeline:
+  name: shopify_order_summary_etl_data_analytics
+  ticket: "TICKET-demo5"
+  description: >
+    Full-load ETL pipeline that connects to a localhost MySQL database,
+    reads the FIRST 1000 rows from MyFonts_Legacy.myfonts_shopify_data
+    (using SQL LIMIT 1000 — see extract.row_limit), extracts the email
+    domain into a new 'domain' column, drops the skuid and eula_id
+    columns, and loads the cleaned records into MyEtlDemo.testTable.
+
+    The pipeline must build SQLAlchemy connection URLs from the extract
+    and load config below using pymysql as the driver:
+      mysql+pymysql://{username}:{password}@{host}:{port}/{database}
+
+    The pipeline must also generate a main.py entry point that reads
+    the password from the SOURCE_DB_PASSWORD and TARGET_DB_PASSWORD
+    environment variables (using os.environ), constructs the URLs,
+    instantiates the pipeline class, and calls run().
+
+  extract:
+    source: mysql
+    driver: pymysql
+    host: localhost
+    port: 3306
+    username: root
+    password_env_var: SOURCE_DB_PASSWORD
+    database: MyFonts_Legacy
+    table: myfonts_shopify_data
+    strategy: full_load
+    row_limit: 3000                              # LIMIT 2000 in the SELECT query
+
+  transform:
+    steps:
+      - drop_columns:
+          columns: [skuid, eula_id]
+
+      - derive_domain:
+          source_field: email
+          expression: "email.split('@')[1] if '@' in email else None"
+          target_field: domain
+          on_null_email: set_domain_null
+
+      - select_columns:
+          columns:
+            - id
+            - created_at
+            - process_at
+            - order_id
+            - order_name
+            - email
+            - domain
+            - variant_title
+            - font_name
+            - md5
+            - source_name
+            - status
+            - attempt_count
+            - last_attempt_on
+            - is_reprocessed
+            - product_type
+            - font_identifier
+            - process_at_date
+
+  quality_checks:
+    pre_load:
+      - row_count_gt: 0
+      - required_fields_not_null:
+          fields: [id, process_at]
+      - column_not_null:
+          - id
+          - process_at
+
+  load:
+    destinations:
+      - name: demo_test_table
+        engine: mysql
+        driver: pymysql
+        host: localhost
+        port: 3306
+        username: root
+        password_env_var: TARGET_DB_PASSWORD
+        database: MyEtlDemo
+        table: testTable
+        mode: append
+        chunksize: 1000
+        auto_create_db: true
+        auto_create_table: true
+        target_ddl: |
+          CREATE TABLE IF NOT EXISTS `testTable` (
+            `id`               bigint unsigned NOT NULL AUTO_INCREMENT,
+            `created_at`       datetime(6) DEFAULT NULL,
+            `process_at`       varchar(255) NOT NULL,
+            `order_id`         varchar(255) DEFAULT NULL,
+            `order_name`       varchar(255) DEFAULT NULL,
+            `email`            varchar(255) DEFAULT NULL,
+            `domain`           varchar(255) DEFAULT NULL,
+            `variant_title`    varchar(255) DEFAULT NULL,
+            `font_name`        varchar(255) DEFAULT NULL,
+            `md5`              varchar(255) DEFAULT NULL,
+            `source_name`      varchar(255) DEFAULT NULL,
+            `status`           enum('load','pending','processing','failed','success') DEFAULT 'failed',
+            `attempt_count`    int DEFAULT '0',
+            `last_attempt_on`  datetime DEFAULT NULL,
+            `is_reprocessed`   bit(1) DEFAULT b'0',
+            `product_type`     varchar(255) DEFAULT NULL,
+            `font_identifier`  varchar(255) DEFAULT NULL,
+            `process_at_date`  datetime DEFAULT NULL,
+            PRIMARY KEY (`id`)
+          ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
+
+  dependencies:
+    python: "3.12"
+    packages:
+      - pandas
+      - sqlalchemy
+      - pymysql
