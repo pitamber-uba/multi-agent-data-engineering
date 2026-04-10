@@ -18,13 +18,14 @@ def test_validate():
     config = {}
     pipeline = ExtensisEventsIngestionPipeline(config)
     
-    valid_df = pd.DataFrame({
-        'event_type': ['permanentActivation'],
-        'gcid': ['GCID123'],
-        'profile_id': ['UUID-123']
+    input_df = pd.DataFrame({
+        'mtf_id': ['123'],
+        'user': ['test@example.com'],
+        'timestamp': ['2023-01-01'],
+        'eventName': ['permanentActivation']
     })
     
-    assert pipeline.validate(valid_df) is True
+    assert pipeline.validate(input_df) is True
     
     invalid_df = pd.DataFrame({'wrong_col': [1]})
     with pytest.raises(ValueError):
