@@ -8,6 +8,7 @@ code — exactly like Cursor AI Agent Mode.
 When AI is disabled, falls back to template-based generation.
 """
 
+import os
 import subprocess
 from pathlib import Path
 
@@ -216,8 +217,12 @@ class DevelopmentAgent(BaseAgent):
                 self._generate_pipeline_template(repo, spec)
                 self._generate_tests_template(repo, spec)
 
+            main_file = repo / "main.py"
+            output_config = Path(config.pipeline_spec)
+            source_config = Path(config.pipeline_spec.replace("/output/config/", "/config/"))
+
             files_to_commit = []
-            for f in [pipeline_file, test_file]:
+            for f in [pipeline_file, test_file, main_file, output_config, source_config]:
                 if f.exists():
                     files_to_commit.append(f)
 
@@ -229,7 +234,7 @@ class DevelopmentAgent(BaseAgent):
             envelope.commit_sha = sha
             return self._success(
                 envelope,
-                files_created=[str(f.relative_to(repo)) for f in files_to_commit],
+                files_created=[os.path.relpath(f, repo) for f in files_to_commit],
                 pipeline_name=pipeline_name,
                 ai_generated=self.ai_enabled,
                 incremental=existing_code,
@@ -540,7 +545,7 @@ class TestValidate:
 
     def _commit_and_push(self, repo: Path, branch: str, ticket: str, files: list[Path], verb: str = "generate") -> str:
         for f in files:
-            self._git(repo, "add", str(f.relative_to(repo)))
+            self._git(repo, "add", os.path.relpath(f, repo))
 
         staged = self._git(repo, "diff", "--cached", "--name-only")
         if staged:

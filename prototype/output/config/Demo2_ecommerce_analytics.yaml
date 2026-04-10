@@ -1,6 +1,6 @@
 pipeline:
   name: ecommerce_order_analytics_etl
-  ticket: "TICKET-002"
+  ticket: "TICKET-40001"
   description: >
     Complex ETL pipeline that extracts the first 5000 orders from
     MyFonts_Legacy.myfonts_shopify_data (using SQL LIMIT 5000 — see extract.row_limit),
